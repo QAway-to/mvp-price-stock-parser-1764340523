@@ -1,0 +1,164 @@
+import json
+from typing import Dict, List, Any, Optional
+
+class ConfigValidationError(Exception):
+    """Custom exception for configuration validation errors."""
+    pass
+
+class ParserConfigLoader:
+    """
+    Loads and validates scraping configurations from a JSON file.
+
+    Each entry in the JSON represents a different target website or product category,
+    defining starting URLs, pagination selectors, item selectors, and a list of
+    specific data points to extract.
+
+    The expected JSON structure:
+    {
+      "site_category_key": {
+        "start_urls": ["http://example.com/start"],
+        "pagination_selector": "a.next::attr(href)", // Optional, string or null
+        "item_selector": "div.product-card",         // Optional, string or null
+        "data_points": [
+          {
+            "name": "product_name",
+            "selector": "h2.title::text",
+            "selector_type": "css", // "css" or "xpath"
+            "multiple": false,      // Optional, boolean, defaults to false
+            "attribute": null,      // Optional, string or null (e.g., "href", "src")
+            "transformations": ["strip", "float"] // Optional, list of strings or null
+          }
+        ]
+      }
+    }
+    """
+    def __init__(self, config_file_path: str):
+        """
+        Initializes the ParserConfigLoader and immediately loads and validates
+        the configuration file.
+
+        Args:
+            config_file_path: The path to the JSON configuration file.
+        """
+        self.config_file_path = config_file_path
+        self._configs: Dict[str, Any] = {}
+        self._load_and_validate()
+
+    def _load_config_file(self) -> Dict[str, Any]:
+        """
+        Loads the JSON configuration file from the specified path.
+
+        Raises:
+            ConfigValidationError: If the file is not found, cannot be decoded,
+                                   or any other I/O error occurs.
+
+        Returns:
+            A dictionary representing the loaded JSON content.
+        """
+        try:
+            with open(self.config_file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            raise ConfigValidationError(f"Configuration file not found: '{self.config_file_path}'")
+        except json.JSONDecodeError as e:
+            raise ConfigValidationError(f"Error decoding JSON from '{self.config_file_path}': {e}")
+        except Exception as e:
+            raise ConfigValidationError(f"An unexpected error occurred while loading config file: {e}")
+
+    def _validate_config_structure(self, raw_configs: Dict[str, Any]):
+        """
+        Validates the overall structure and data types of the loaded configuration.
+
+        Args:
+            raw_configs: The raw dictionary loaded from the JSON file.
+
+        Raises:
+            ConfigValidationError: If any part of the configuration does not
+                                   meet the expected structure or type.
+        """
+        if not isinstance(raw_configs, dict):
+            raise ConfigValidationError("Root of the configuration must be a dictionary.")
+
+        if not raw_configs:
+            raise ConfigValidationError("Configuration file cannot be empty.")
+
+        for site_key, site_config in raw_configs.items():
+            if not isinstance(site_config, dict):
+                raise ConfigValidationError(f"Configuration for '{site_key}' must be a dictionary.")
+
+            # Validate 'start_urls'
+            start_urls = site_config.get("start_urls")
+            if not isinstance(start_urls, list) or not all(isinstance(url, str) for url in start_urls):
+                raise ConfigValidationError(f"'{site_key}': 'start_urls' must be a list of strings.")
+            if not start_urls:
+                 raise ConfigValidationError(f"'{site_key}': 'start_urls' cannot be empty.")
+
+            # Validate optional 'pagination_selector'
+            pagination_selector = site_config.get("pagination_selector")
+            if pagination_selector is not None and not isinstance(pagination_selector, str):
+                raise ConfigValidationError(
+                    f"'{site_key}': 'pagination_selector' must be a string or null.")
+
+            # Validate optional 'item_selector'
+            item_selector = site_config.get("item_selector")
+            if item_selector is not None and not isinstance(item_selector, str):
+                raise ConfigValidationError(
+                    f"'{site_key}': 'item_selector' must be a string or null.")
+
+            # Validate 'data_points'
+            data_points = site_config.get("data_points")
+            if not isinstance(data_points, list):
+                raise ConfigValidationError(f"'{site_key}': 'data_points' must be a list.")
+            if not data_points:
+                 raise ConfigValidationError(f"'{site_key}': 'data_points' cannot be empty.")
+
+            for i, dp in enumerate(data_points):
+                if not isinstance(dp, dict):
+                    raise ConfigValidationError(f"'{site_key}': data_point at index {i} must be a dictionary.")
+
+                name = dp.get("name")
+                if not isinstance(name, str) or not name:
+                    raise ConfigValidationError(
+                        f"'{site_key}': data_point at index {i} requires a non-empty 'name' (string).")
+
+                selector = dp.get("selector")
+                if not isinstance(selector, str) or not selector:
+                    raise ConfigValidationError(
+                        f"'{site_key}': data_point '{name}' requires a non-empty 'selector' (string).")
+
+                selector_type = dp.get("selector_type")
+                if selector_type not in ["css", "xpath"]:
+                    raise ConfigValidationError(
+                        f"'{site_key}': data_point '{name}' 'selector_type' must be 'css' or 'xpath'.")
+
+                multiple = dp.get("multiple", False)  # Defaults to False if not present
+                if not isinstance(multiple, bool):
+                    raise ConfigValidationError(
+                        f"'{site_key}': data_point '{name}' 'multiple' must be a boolean.")
+
+                attribute = dp.get("attribute")
+                if attribute is not None and not isinstance(attribute, str):
+                    raise ConfigValidationError(
+                        f"'{site_key}': data_point '{name}' 'attribute' must be a string or null.")
+
+                transformations = dp.get("transformations")
+                if transformations is not None and (not isinstance(transformations, list) or not all(isinstance(t, str) for t in transformations)):
+                    raise ConfigValidationError(
+                        f"'{site_key}': data_point '{name}' 'transformations' must be a list of strings or null.")
+
+    def _load_and_validate(self):
+        """
+        Internal method to orchestrate loading and validating the configuration.
+        """
+        raw_configs = self._load_config_file()
+        self._validate_config_structure(raw_configs)
+        self._configs = raw_configs  # Store the validated configurations
+
+    def get_configs(self) -> Dict[str, Any]:
+        """
+        Returns the loaded and validated scraping configurations.
+
+        Returns:
+            A dictionary containing the validated scraping configurations.
+        """
+        return self._configs
